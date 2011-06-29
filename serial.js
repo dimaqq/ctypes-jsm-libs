@@ -1,5 +1,9 @@
 // we'll use plenty ctypes
 Components.utils.import('resource://gre/modules/ctypes.jsm');
+// DEBUG turns off exceptions on serial settings
+// DEBUG=true allows test cases with regular files
+// DEBUG=false/undefined enforces access to serial ports only
+const DEBUG=true;
 
 /* ctypes.jsm types:
    bool short unsigned_short int unsigned_int
@@ -148,8 +152,11 @@ function serial_write(fd, data) {
     if (errsv == EAGAIN) return 0;
     raise_error('write', SerialException, errsv);
   }
-  // FIXME check if rv==0 ever happens
-  if (rv == 0) throw new SerialException('write: device disconnected');
+
+  // TODO test disconnected device (e.g. usb serial)
+  // read return value 0 means nothing yet, not end of file
+  //if (rv == 0) throw new SerialException('write: device disconnected');
+
   return rv;
 }
 
@@ -180,21 +187,18 @@ function serial_read(fd, len, return_type)
   if (len < 0)
   {
     var errsv = errno();
-    if (errsv == EAGAIN)
-    {
-      if (return_type == 'string') return '';
-      if (return_type == 'ascii_string') return '';
-      return new Uint8Array();
-    }
-    raise_error('read', SerialException, errsv);
+    if (errsv != EAGAIN) raise_error('read', SerialException, errsv);
+    buffer[0] = len = 0;
   }
-  // FIXME check if rv==0 ever happens
-  if (len == 0)
-    throw new SerialException('read: device disconnected');
+
+  // read return value 0 means nothing yet, not end of file
+  //if (len == 0) throw new SerialException('read: device disconnected');
+
   if (return_type == 'string')
     return String.fromCharCode.apply(null, buffer).slice(0, len);
-  if (return_type == 'ascii_string')
-    return buffer.readString();
+
+  if (return_type == 'ascii_string') return buffer.readString();
+
   return (new Uint8Array(buffer)).subarray(0, len);
 }
 
@@ -280,12 +284,12 @@ function serial_set_baudrate(fd, baud)
     throw new SerialException('unknown baudrate ' + baud);
   var t = struct_termios();
   var rv = 0;
-  if (rv == 0) rv = tcgetattr(fd, t.address());
+  if (DEBUG || rv == 0) rv = tcgetattr(fd, t.address());
   //debug('== ' + (rv == 0) + ' === ' + (rv === 0));
-  if (rv == 0) rv = cfsetospeed(t.address(), speed);
-  if (rv == 0) rv = cfsetispeed(t.address(), speed);
-  if (rv == 0) rv = tcsetattr(fd, TCSAFLUSH, t.address());
-  if (rv < 0) raise_error('serial_set_baudrate ' + baud, SerialException);
+  if (DEBUG || rv == 0) rv = cfsetospeed(t.address(), speed);
+  if (DEBUG || rv == 0) rv = cfsetispeed(t.address(), speed);
+  if (DEBUG || rv == 0) rv = tcsetattr(fd, TCSAFLUSH, t.address());
+  if (!DEBUG && rv < 0) raise_error('serial_set_baudrate ' + baud, SerialException);
 }
 
 function serial_set_flowcontrol(fd, flow)
@@ -303,13 +307,13 @@ function serial_set_flowcontrol(fd, flow)
   }
   var t = struct_termios();
   var rv = 0;
-  if (rv == 0) rv = tcgetattr(fd, t.address());
+  if (DEBUG || rv == 0) rv = tcgetattr(fd, t.address());
   t.c_iflag &= ~(IXON | IXOFF);
   t.c_iflag |= ((fl & 1) ? IXON : 0) | ((fl & 2) ? IXOFF : 0);
   t.c_cflag &= ~(CRTSCTS);
   t.c_cflag |= (fl == 4) ? CRTSCTS : 0;
-  if (rv == 0) rv = tcsetattr(fd, TCSAFLUSH, t.address());
-  if (rv < 0) raise_error('serial_set_flowcontrol ' + flow, SerialException);
+  if (DEBUG || rv == 0) rv = tcsetattr(fd, TCSAFLUSH, t.address());
+  if (!DEBUG && rv < 0) raise_error('serial_set_flowcontrol ' + flow, SerialException);
 }
 
 function serial_set_parity(fd, par)
@@ -318,87 +322,87 @@ function serial_set_parity(fd, par)
   par = par.toUpperCase()[0];
   var t = struct_termios();
   var rv = 0;
-  if (rv == 0) rv = tcgetattr(fd, t.address());
+  if (DEBUG || rv == 0) rv = tcgetattr(fd, t.address());
   t.c_cflag &= ~tcflag_t(PARODD | PARENB | CMSPAR);
   if (par == 'O') t.c_cflag |= PARENB | PARODD;
   if (par == 'E') t.c_cflag |= PARENB;
   if (par == 'N') t.c_cflag |= 0;
   if (par == 'M') t.c_cflag |= CMSPAR;
   if (par == 'S') t.c_cflag |= PARODD | CMSPAR;
-  if (rv == 0) rv = tcsetattr(fd, TCSAFLUSH, t.address());
-  if (rv < 0) raise_error('serial_set_parity ' + par, SerialException);
+  if (DEBUG || rv == 0) rv = tcsetattr(fd, TCSAFLUSH, t.address());
+  if (!DEBUG && rv < 0) raise_error('serial_set_parity ' + par, SerialException);
 }
 
 function serial_set_stopbits(fd, bits)
 {
   var t = struct_termios();
   var rv = 0;
-  if (rv == 0) rv = tcgetattr(fd, t.address());
+  if (DEBUG || rv == 0) rv = tcgetattr(fd, t.address());
   t.c_cflag &= ~tcflag_t(CSTOPB);
   t.c_cflag |= tcflag_t(bits == 2 ? CSTOPB : 0);
-  if (rv == 0) rv = tcsetattr(fd, TCSAFLUSH, t.address());
-  if (rv < 0) raise_error('serial_set_stopbits ' + bits, SerialException);
+  if (DEBUG || rv == 0) rv = tcsetattr(fd, TCSAFLUSH, t.address());
+  if (!DEBUG && rv < 0) raise_error('serial_set_stopbits ' + bits, SerialException);
 }
 
 function serial_set_bytesize(fd, bytesize)
 {
   var t = struct_termios();
   var rv = 0;
-  if (rv == 0) rv = tcgetattr(fd, t.address());
+  if (DEBUG || rv == 0) rv = tcgetattr(fd, t.address());
   t.c_cflag &= ~tcflag_t(CSIZE);
   t.c_cflag |= {8: CS8, 7: CS7, 6: CS6, 5: CS5}[bytesize];
-  if (rv == 0) rv = tcsetattr(fd, TCSAFLUSH, t.address());
-  if (rv < 0) raise_error('serial_set_bytsize ' + bytsize, SerialException);
+  if (DEBUG || rv == 0) rv = tcsetattr(fd, TCSAFLUSH, t.address());
+  if (!DEBUG && rv < 0) raise_error('serial_set_bytsize ' + bytsize, SerialException);
 }
 
 function serial_set_raw(fd)
 {
   var t = struct_termios();
   var rv = 0;
-  if (rv == 0) rv = tcgetattr(fd, t.address());
+  if (DEBUG || rv == 0) rv = tcgetattr(fd, t.address());
   t.c_iflag = (IGNBRK | IGNPAR | INPCK);
   t.c_oflag = 0;
   t.c_cflag = (CS8 | CREAD | CLOCAL);
   t.c_lflag = 0;
   t.c_cc[VMIN] = 1;
   t.c_cc[VTIME] = 0;
-  if (rv == 0) rv = tcsetattr(fd, TCSAFLUSH, t.address());
-  if (rv < 0) raise_error('serial_set_raw', SerialException);
+  if (DEBUG || rv == 0) rv = tcsetattr(fd, TCSAFLUSH, t.address());
+  if (!DEBUG && rv < 0) raise_error('serial_set_raw', SerialException);
 }
 
 function serial_set_canonical(fd, c)
 {
   var t = struct_termios();
   var rv = 0;
-  if (rv == 0) rv = tcgetattr(fd, t.address());
+  if (DEBUG || rv == 0) rv = tcgetattr(fd, t.address());
   t.c_cflag &= ~tcflag_t(ICANON);
   t.c_cflag |= tcflag_t(c ? ICANON : 0);
-  if (rv == 0) rv = tcsetattr(fd, TCSAFLUSH, t.address());
-  if (rv < 0) raise_error('serial_set_canonical ' + c, SerialException);
+  if (DEBUG || rv == 0) rv = tcsetattr(fd, TCSAFLUSH, t.address());
+  if (!DEBUG && rv < 0) raise_error('serial_set_canonical ' + c, SerialException);
 }
 
 function serial_set_crnl(fd, c)
 {
   var t = struct_termios();
   var rv = 0;
-  if (rv == 0) rv = tcgetattr(fd, t.address());
+  if (DEBUG || rv == 0) rv = tcgetattr(fd, t.address());
   t.c_iflag &= ~tcflag_t(IGNCR);
   t.c_iflag |= c ? IGNCR : 0;
   t.c_oflag &= ~tcflag_t(OPOST | ONLCR);
   t.c_oflag |= c ? (OPOST | ONLCR) : 0;
-  if (rv == 0) rv = tcsetattr(fd, TCSAFLUSH, t.address());
-  if (rv < 0) raise_error('serial_set_crnl ' + c, SerialException);
+  if (DEBUG || rv == 0) rv = tcsetattr(fd, TCSAFLUSH, t.address());
+  if (!DEBUG && rv < 0) raise_error('serial_set_crnl ' + c, SerialException);
 }
 
 function serial_set_modem(fd, m)
 {
   var t = struct_termios();
   var rv = 0;
-  if (rv == 0) rv = tcgetattr(fd, t.address());
+  if (DEBUG || rv == 0) rv = tcgetattr(fd, t.address());
   t.c_cflag &= ~tcflag_t(CLOCAL);
   t.c_cflag |= tcflag_t(m ? 0 : CLOCAL);
-  if (rv == 0) rv = tcsetattr(fd, TCSAFLUSH, t.address());
-  if (rv < 0) raise_error('serial_set_modem ' + m, SerialException);
+  if (DEBUG || rv == 0) rv = tcsetattr(fd, TCSAFLUSH, t.address());
+  if (!DEBUG && rv < 0) raise_error('serial_set_modem ' + m, SerialException);
 }
 
 function serial_set_blocking(fd, blocking)
@@ -407,31 +411,20 @@ function serial_set_blocking(fd, blocking)
   var tmp = rv = fcntl(fd, F_GETFL);
   if (blocking) tmp &= ~O_NONBLOCK;
   else tmp |= ~O_NONBLOCK;
-  if (rv == 0) rv = fcntl(fd, F_SETFL, ctypes.long(tmp));
-  if (rv < 0) raise_error('serial_set_blocking ' + blocking, SerialException);
+  if (DEBUG || rv == 0) rv = fcntl(fd, F_SETFL, ctypes.long(tmp));
+  if (!DEBUG && rv < 0) raise_error('serial_set_blocking ' + blocking, SerialException);
 }
 
 function serial_flush(fd, mode)
 {
   if (!mode) mode = 'io';
   var rv = tcflush(fd, {i: TCIFLUSH, o: TCOFLUSH, io: TCIOFLUSH}[mode]);
-  if (rv < 0) raise_error('serial_flush ' + mode, SerialException);
+  if (!DEBUG && rv < 0) raise_error('serial_flush ' + mode, SerialException);
 }
 
-// test /dev/ttyS0
 function test_serial_baudrate() {
   var fd = open('/dev/ttyS0', O_RDWR | O_NOCTTY | O_NONBLOCK);
   debug('fd ' + fd);
   serial_set_baudrate(fd, 115200);
   close(fd);
 }
-
-//try {
-//test_serial_baudrate();
-//} catch (e) { debug(e); }
-
-// throws TypeError
-//try {
-  //debug('testing opearations on undefined');
-  //serial_set_baudrate(undefined, 9600);
-//} catch (e) { debug(e); }
